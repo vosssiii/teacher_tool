@@ -1,0 +1,19 @@
+# Ergebnisse der Laufzeit-Tests - gehören nicht ins Plugin.
+# Führender Schrägstrich: nur im Projektstamm, sonst würde das Muster auch
+# den Skill-Ordner skills/laufzeit-test/ ausschließen.
+/laufzeit-test/
+/berichte/
+
+# Arbeitsordner der Lehrkraft, falls er zum Testen hier liegt
+/Unterricht/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Betriebssystem
+.DS_Store
+Thumbs.db
+desktop.ini

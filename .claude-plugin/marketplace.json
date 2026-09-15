@@ -1,0 +1,14 @@
+{
+  "$schema": "https://code.claude.com/schemas/marketplace.json",
+  "name": "teacher-tool",
+  "owner": {
+    "name": "Yannik Voss"
+  },
+  "plugins": [
+    {
+      "name": "unterrichtsassistent",
+      "source": "./unterrichtsassistent",
+      "description": "Unterrichtsassistent für Lehrkräfte – Materialien aufnehmen, Arbeitsblätter und Klassenarbeiten erstellen"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# Einheitliche Zeilenenden: das Plugin wird auf fremden Rechnern ausgecheckt
+* text=auto eol=lf
+*.docx binary
+*.pptx binary
+*.pdf binary

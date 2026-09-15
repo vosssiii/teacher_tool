@@ -1,0 +1,16 @@
+{
+  "$schema": "https://code.claude.com/schemas/plugin.json",
+  "name": "unterrichtsassistent",
+  "description": "Unterrichtsassistent für Lehrkräfte (Englisch, Arbeit & Recht). Phase 1a: nur der Laufzeit-Test.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Yannik Voss"
+  },
+  "keywords": [
+    "schule",
+    "unterricht",
+    "lehrkraft",
+    "arbeitsblatt",
+    "klassenarbeit"
+  ]
+}
