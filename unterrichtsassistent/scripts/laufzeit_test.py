@@ -131,6 +131,23 @@ def jetzt():
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+class Stoppuhr:
+    """Misst die Dauer je Abschnitt. Ohne Messung bleibt T9 eine Schaetzung."""
+
+    def __init__(self):
+        self.start = datetime.now()
+        self.abschnitte = {}
+        self._letzter = self.start
+
+    def abschnitt(self, name):
+        gerade = datetime.now()
+        self.abschnitte[name] = round((gerade - self._letzter).total_seconds(), 1)
+        self._letzter = gerade
+
+    def gesamt(self):
+        return round((datetime.now() - self.start).total_seconds(), 1)
+
+
 def versuch(fn, *args, **kwargs):
     """Fuehrt fn aus und faengt wirklich alles ab. Nie darf eine Probe den Lauf beenden."""
     try:
@@ -790,7 +807,9 @@ BEOBACHTUNGEN = [
         "Bei welchen griff der Skill ohne Befehl, bei welchen nicht?",
     ]),
     ("T9", [
-        "Wie lange dauerte dieser Lauf, und wie viel Kontingent hat er verbraucht?",
+        "Wie viel Kontingent hat dieser Lauf verbraucht? (Die reine Laufzeit des "
+        "Skripts steht oben im Kopf und unter „Umgebung im Detail“ – gemeint ist "
+        "hier der Verbrauch der Sitzung. Gibt es dafür überhaupt eine Anzeige?)",
         "Empfohlene Zahl Dateien pro `/aufnehmen`-Durchlauf (Startwert im Konzept: 10)?",
     ]),
     ("T6b", [
@@ -815,6 +834,9 @@ def bericht_schreiben(daten, ziel):
     z.append("| **Zeitpunkt** | %s |" % daten["zeitpunkt"])
     z.append("| **Python** | %s |" % daten["system"]["python"])
     z.append("| **Plattform** | %s |" % daten["system"]["plattform"])
+    dauer = daten.get("dauer") or {}
+    if dauer:
+        z.append("| **Laufzeit des Skripts** | %s Sekunden |" % dauer.get("gesamt_sekunden"))
     z.append("")
     z.append("> Dieser Bericht gilt **nur für die oben genannte Umgebung**. "
              "Ein Lauf in Claude Code sagt nichts über Cowork aus.")
@@ -948,13 +970,27 @@ def bericht_schreiben(daten, ziel):
                     textspalte = "⚠️ unvollständig"
                 else:
                     textspalte = "–"
-                z.append("| %s | %s | %s | %s | %s Bytes |" % (
+                # Drei verschiedene Fehlschläge, die man nicht verwechseln darf:
+                # gar keine Datei, eine unbrauchbare Datei, oder alles in Ordnung.
+                datei = inhalt.get("datei") or {}
+                protokoll = inhalt.get("protokoll") or {}
+                if not datei.get("vorhanden"):
+                    if protokoll.get("code"):
+                        ergebnisspalte = ("❌ keine Datei erzeugt, Programm meldete "
+                                          "Fehler (Code %s)" % protokoll["code"])
+                    else:
+                        ergebnisspalte = "❌ keine Datei erzeugt"
+                    textspalte = "–"
+                elif inhalt.get("gueltig"):
+                    ergebnisspalte = "✅ gültiges PDF"
+                else:
+                    ergebnisspalte = "⚠️ Datei entstand, ist aber kein gültiges PDF"
+                z.append("| %s | %s | %s | %s | %s |" % (
                     name,
-                    "✅ gültiges PDF" if inhalt.get("gueltig")
-                    else "⚠️ Datei entstand, ist aber kein gültiges PDF",
-                    inhalt.get("seiten") or "?",
+                    ergebnisspalte,
+                    inhalt.get("seiten") or "–",
                     textspalte,
-                    inhalt.get("datei", {}).get("bytes", "?")))
+                    ("%s Bytes" % datei["bytes"]) if datei.get("vorhanden") else "–"))
             else:
                 z.append("| %s | ❌ %s | – | – | – |" % (
                     name, wert.get("fehler", "fehlgeschlagen")))
@@ -999,6 +1035,15 @@ def bericht_schreiben(daten, ziel):
     z.append("- **Andere Programme starten:** %s" % (
         "✅ erlaubt" if system.get("unterprozess_erlaubt", {}).get("ok") else "❌ blockiert"))
     z.append("")
+    if dauer.get("abschnitte"):
+        z.append("**Laufzeit je Abschnitt** (Grundlage für T9):")
+        z.append("")
+        z.append("| Abschnitt | Sekunden |")
+        z.append("| --- | --- |")
+        for name, sekunden in dauer["abschnitte"].items():
+            z.append("| %s | %s |" % (name, sekunden))
+        z.append("| **gesamt** | **%s** |" % dauer.get("gesamt_sekunden"))
+        z.append("")
 
     # --- Beobachtungen ---
     z.append("---")
@@ -1055,6 +1100,7 @@ def main():
     print("Ausgabe: %s" % ordner)
     print("-" * 60)
 
+    uhr = Stoppuhr()
     daten = {
         "schema": SCHEMA,
         "zeitpunkt": jetzt(),
@@ -1064,23 +1110,29 @@ def main():
 
     print("[1/5] Umgebung prüfen …")
     daten["system"] = probe_umgebung(ordner)
+    uhr.abschnitt("Umgebung")
 
     print("[2/5] T1: Bibliotheken prüfen%s …" % (" und nachinstallieren" if argumente.install else ""))
     daten["bibliotheken"] = probe_bibliotheken(argumente.install)
+    uhr.abschnitt("T1 Bibliotheken")
 
     print("[3/5] T3: Word und PowerPoint aus Vorlage erzeugen …")
     daten["word"] = versuch(probe_word, ordner)
     daten["powerpoint"] = versuch(probe_powerpoint, ordner)
+    uhr.abschnitt("T3 Word und PowerPoint")
 
     print("[4/5] T2: PDF-Wege prüfen (kann dauern, LibreOffice startet langsam) …")
     docx_pfad = daten["word"]["wert"].get("datei") if daten["word"].get("ok") else None
     pdf_probe = versuch(probe_pdf, ordner, docx_pfad)
     daten["pdf"] = pdf_probe["wert"] if pdf_probe["ok"] else {
-        "word_zu_pdf": {}, "ersatzweg": {}, "fehler": pdf_probe["fehler"]}
+        "word_zu_pdf": {}, "ersatzweg": {}, "direkt": {}, "fehler": pdf_probe["fehler"]}
+    uhr.abschnitt("T2 PDF")
 
     print("[5/5] T6: Webzugriff prüfen …")
     daten["web"] = probe_web()
+    uhr.abschnitt("T6 Webzugriff")
 
+    daten["dauer"] = {"gesamt_sekunden": uhr.gesamt(), "abschnitte": uhr.abschnitte}
     daten["ampel"] = bewerten(daten)
 
     roh = ordner / "roh.json"
