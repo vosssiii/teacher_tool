@@ -5,7 +5,9 @@ description: Prüft, ob der Unterrichtsassistent auf diesem Computer wirklich ar
 
 # Laufzeit-Test (Phase 1a)
 
-Dieser Skill beantwortet die neun Testpunkte T1–T9 aus `KONZEPT.md` Kap. 13.
+Dieser Skill beantwortet die neun Testpunkte T1–T9 aus dem Konzeptpapier
+(Kap. 13). Das Papier liegt **nicht** im Plugin – alles, was du brauchst,
+steht hier. Such nicht danach.
 Er ist **Wegwerf-Werkzeug**: Sobald Phase 1a abgeschlossen ist, wird er
 durch die echten Skills (`einrichten`, `aufnehmen`, `material`, …) ersetzt.
 

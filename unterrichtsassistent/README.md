@@ -1,6 +1,10 @@
 # Unterrichtsassistent – Phase 1a
 
-Plugin für Lehrkräfte (Englisch, Arbeit & Recht). Konzept: [`../KONZEPT.md`](../KONZEPT.md).
+Plugin für Lehrkräfte (Englisch, Arbeit & Recht).
+
+> Das Konzeptpapier (`KONZEPT.md`, Kapitelverweise unten) liegt bewusst
+> nicht im Repository. Kapitel- und Testpunktnummern sind hier nur als
+> Herkunftsangabe genannt – zum Ausführen des Tests wird es nicht gebraucht.
 
 **Stand: Phase 1a (Laufzeit-Test).** Das Plugin enthält bewusst nur einen
 Skill und ein Skript. Sie beantworten die Testpunkte T1–T9 aus Kap. 13 und

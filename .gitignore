@@ -4,6 +4,9 @@
 /laufzeit-test/
 /berichte/
 
+# Konzeptpapier - bleibt lokal, gehoert nicht ins oeffentliche Repo
+/KONZEPT.md
+
 # Arbeitsordner der Lehrkraft, falls er zum Testen hier liegt
 /Unterricht/
 
