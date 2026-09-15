@@ -282,6 +282,22 @@ def probe_umgebung(ordner):
         return {"laenge": len(str(ziel)), "pfad": str(ziel)}
     ergebnis["langer_pfad"] = versuch(langer_pfad)
 
+    # Wo laufen wir? Cowork kennt zwei Ausfuehrungsorte, und sie verhalten sich
+    # grundverschieden:
+    #   - lokale Geraete-Sandbox (device_bash): Skripte arbeiten im Ordner der
+    #     Lehrkraft. Braucht Virtualisierung auf ihrem Rechner.
+    #   - Cloud-Umgebung: Dateien muessen einzeln herein- und herausgereicht
+    #     werden (stage/commit). Erkennbar an den /mnt-Ordnern von Cowork.
+    # Ein Bericht ohne diese Angabe ist wertlos, weil unklar bleibt, wofuer er gilt.
+    mnt = {}
+    for pfad in ("/mnt/user-data", "/mnt/user-data/uploads", "/mnt/user-data/outputs",
+                 "/mnt/attach", "/mnt/skills", "/mnt/sandboxing"):
+        mnt[pfad] = Path(pfad).exists()
+    ergebnis["cowork_mnt"] = mnt
+    ergebnis["vermuteter_ausfuehrungsort"] = (
+        "Cloud-Umgebung (Dateien per stage/commit)" if mnt.get("/mnt/user-data")
+        else "lokale Geräte-Sandbox oder gewöhnlicher Rechner")
+
     # Externe Programme
     gefunden = {}
     for werkzeug in WERKZEUGE:
@@ -834,6 +850,8 @@ def bericht_schreiben(daten, ziel):
     z.append("| **Zeitpunkt** | %s |" % daten["zeitpunkt"])
     z.append("| **Python** | %s |" % daten["system"]["python"])
     z.append("| **Plattform** | %s |" % daten["system"]["plattform"])
+    z.append("| **Architektur** | %s |" % daten["system"].get("architektur"))
+    z.append("| **Ausführungsort** | %s |" % daten["system"].get("vermuteter_ausfuehrungsort"))
     dauer = daten.get("dauer") or {}
     if dauer:
         z.append("| **Laufzeit des Skripts** | %s Sekunden |" % dauer.get("gesamt_sekunden"))

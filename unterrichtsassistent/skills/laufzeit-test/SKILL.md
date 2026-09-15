@@ -43,7 +43,29 @@ Halte **jetzt** fest, solange es frisch ist, und merke es dir für Schritt 4:
 - **T5:** Mit welchem Modell läufst du gerade? Wenn du es nicht sicher
   weißt, schreibe das genau so hin.
 
-## Schritt 2 – Skript ausführen
+## Schritt 2 – Skript ausführen, in **beiden** Umgebungen
+
+Cowork kann Code an zwei verschiedenen Orten ausführen, und sie verhalten
+sich grundverschieden:
+
+| Ort | Dateien | Erkennbar an |
+| --- | --- | --- |
+| **lokale Geräte-Sandbox** (`device_bash`) | Skripte arbeiten direkt im Ordner der Lehrkraft | kein `/mnt/user-data` |
+| **Cloud-Umgebung** | Dateien müssen einzeln herein (`device_stage_files`) und heraus (`device_commit_files`) | `/mnt/user-data` vorhanden |
+
+**Führe den Test nach Möglichkeit in beiden aus** und gib bei `--umgebung`
+an, welcher es war. Ein Bericht aus der Cloud sagt nichts über die lokale
+Sandbox: andere Architektur (ARM statt x86), möglicherweise anderes
+Abbild, andere Programme. Das Skript schreibt seinen vermuteten
+Ausführungsort selbst in den Kopf des Berichts – prüfe, ob er zu deiner
+Erwartung passt.
+
+Scheitert `device_bash` mit „Workspace unavailable“, halte das fest: Auf
+dem Rechner der Lehrkraft fehlt dann die Virtualisierung. Auf Apple
+Silicon ist sie immer vorhanden, unter Windows muss sie im BIOS
+eingeschaltet sein.
+
+
 
 Das Skript liegt im Plugin unter `scripts/laufzeit_test.py`.
 
