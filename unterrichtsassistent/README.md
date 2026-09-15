@@ -6,26 +6,54 @@ Plugin für Lehrkräfte (Englisch, Arbeit & Recht).
 > nicht im Repository. Kapitel- und Testpunktnummern sind hier nur als
 > Herkunftsangabe genannt – zum Ausführen des Tests wird es nicht gebraucht.
 
-**Stand: Phase 1a (Laufzeit-Test).** Das Plugin enthält bewusst nur einen
-Skill und ein Skript. Sie beantworten die Testpunkte T1–T9 aus Kap. 13 und
-werden danach durch die echten Skills ersetzt. Es ist Wegwerf-Werkzeug.
+**Stand: Phase 1b begonnen.** Phase 1a (Laufzeit-Test) ist abgeschlossen –
+alle Testpunkte T1–T9 beantwortet, Befunde in `BEFUNDE-PHASE-1A.md`
+(liegt nicht im Repo).
 
-## Wozu
-
-Entwickelt wird in Claude Code, ausgeführt in Claude Cowork. Ob dort
-Skripte, Bibliotheken und Umwandlungen überhaupt laufen, ist ungeprüft –
-das größte Risiko des Vorhabens (Kap. 2). Phase 1a klärt das, **bevor**
-weitergebaut wird.
+| Befehl | Stand |
+| --- | --- |
+| `/unterrichtsassistent:einrichten` | gebaut |
+| `/unterrichtsassistent:aufnehmen` | offen |
+| `/unterrichtsassistent:material` | offen |
+| `/unterrichtsassistent:klassenarbeit` | offen (braucht Material der Lehrkraft) |
+| `/unterrichtsassistent:freigeben` | offen |
+| `/unterrichtsassistent:laufzeit-test` | Wegwerf-Werkzeug aus Phase 1a |
 
 ## Was hier liegt
 
 ```
 unterrichtsassistent/
 ├── .claude-plugin/plugin.json
-├── commands/laufzeit-test.md       macht den Skill als /laufzeit-test aufrufbar
-├── skills/laufzeit-test/SKILL.md   Ablauf inkl. der fünf Beobachtungen
-└── scripts/laufzeit_test.py        misst T1, T2, T3, T6
+├── commands/                       ohne diese Dateien gibt es keine Befehle
+│   ├── einrichten.md
+│   └── laufzeit-test.md
+├── skills/
+│   ├── einrichten/SKILL.md         Ordner vorbereiten, Kontext erfassen
+│   └── laufzeit-test/SKILL.md      Ablauf des Laufzeit-Tests
+├── scripts/
+│   ├── einrichten.py               Ordner, Skript-Bereitstellung, Bereitschaft
+│   ├── vorlage_pruefen.py          Formatvorlagen einer Vorlage prüfen
+│   └── laufzeit_test.py            misst T1, T2, T3, T6
+└── vorlagen/
+    ├── standard_vorlage.docx       neutrale Word-Vorlage als Ersatz
+    ├── standard_vorlage.pptx       neutrale PowerPoint-Vorlage
+    ├── schule_vorlage.md           Aufbau von _kontext/schule.md
+    └── ordner_anweisung.md         Text für die Anweisung im Projekt
 ```
+
+## Zwei Dinge, die aus Phase 1a folgen
+
+**Befehle brauchen `commands/`.** Ein Skill allein ist kein
+Schrägstrich-Befehl. Cowork listet ihn, meldet beim Aufruf aber „Unknown
+command". Jeder Befehl braucht eine Datei in `commands/`, die den Skill
+aufruft. Das Präfix gehört dazu: `/unterrichtsassistent:einrichten`.
+
+**Skripte müssen an ihren Einsatzort gebracht werden.**
+`${CLAUDE_PLUGIN_ROOT}` ist leer, und in der lokalen Geräte-Sandbox liegt
+das Plugin gar nicht. `einrichten.py` kopiert deshalb alle Skripte und
+Vorlagen nach `_system/skripte/` bzw. `_system/vorlagen/` im Arbeitsordner
+der Lehrkraft und frischt sie bei jedem Aufruf auf. Skripte nehmen keine
+festen Pfade an – der Arbeitsordner wird übergeben.
 
 ### Warum es beides gibt, `commands/` und `skills/`
 
