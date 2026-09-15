@@ -22,9 +22,23 @@ weitergebaut wird.
 ```
 unterrichtsassistent/
 ├── .claude-plugin/plugin.json
+├── commands/laufzeit-test.md       macht den Skill als /laufzeit-test aufrufbar
 ├── skills/laufzeit-test/SKILL.md   Ablauf inkl. der fünf Beobachtungen
 └── scripts/laufzeit_test.py        misst T1, T2, T3, T6
 ```
+
+### Warum es beides gibt, `commands/` und `skills/`
+
+Befund aus dem ersten Cowork-Lauf: Ein Skill unter `skills/*/SKILL.md` wird
+zwar geladen und kann vom Modell aufgerufen werden, ist aber **kein**
+Schrägstrich-Befehl. Cowork zeigt ihn in der Liste an, fügt beim Auswählen
+`/unterrichtsassistent:laufzeit-test` ein – und antwortet darauf
+„Unknown command“. Nur Dateien in `commands/` werden zu Befehlen.
+
+Das gilt für jeden Befehl, den die Lehrkraft tippen soll. `/einrichten`,
+`/material`, `/aufnehmen`, `/klassenarbeit` und `/freigeben` brauchen je
+eine Datei in `commands/`, die den zugehörigen Skill aufruft. Die
+Plugin-Struktur in Kap. 4.2 des Konzepts sieht das noch nicht vor.
 
 ## Die Arbeitsteilung
 
