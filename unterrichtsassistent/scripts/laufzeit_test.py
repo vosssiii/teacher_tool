@@ -51,9 +51,11 @@ BIBLIOTHEKEN = [
     ("markdown",   "Markdown",       "Markdown zu HTML (Ersatzweg PDF, HTML-Folien)",  True),
     ("fitz",       "PyMuPDF",        "Text und Bilder aus PDF (zu_markdown.py)",       False),
     ("openpyxl",   "openpyxl",       "Excel lesen (zu_markdown.py)",                   False),
-    ("weasyprint", "weasyprint",     "HTML zu PDF (Ersatzweg, zu_pdf.py)",             False),
+    ("xhtml2pdf",  "xhtml2pdf",      "HTML zu PDF, braucht keine Systemprogramme",     False),
+    ("fpdf",       "fpdf2",          "PDF direkt bauen, braucht keine Systemprogramme", False),
+    ("reportlab",  "reportlab",      "PDF direkt bauen, braucht keine Systemprogramme", False),
+    ("weasyprint", "weasyprint",     "HTML zu PDF, braucht GTK-Systembibliotheken",    False),
     ("docx2pdf",   "docx2pdf",       "Word zu PDF ueber installiertes Office",         False),
-    ("reportlab",  "reportlab",      "PDF direkt erzeugen (Notnagel)",                 False),
     ("lxml",       "lxml",           "XML-Unterbau von python-docx/-pptx",             False),
     ("jinja2",     "Jinja2",         "HTML-Folien aus Vorlage (md_zu_folien.py)",      False),
     ("bs4",        "beautifulsoup4", "HTML auswerten (Rechtsstand-Pruefung)",          False),
@@ -63,10 +65,14 @@ BIBLIOTHEKEN = [
 
 # Pakete, die nur fuer den Weg zum PDF gebraucht werden. Sie gelten oben als
 # optional, werden mit --install aber trotzdem probiert: ohne sie laesst sich
-# T2 nicht ehrlich beantworten. Getrennter Durchgang, weil sie aus eigenen
-# Gruenden scheitern - weasyprint braucht Systembibliotheken, docx2pdf ein
-# installiertes Office. Genau das ist der Befund.
-PDF_PAKETE = ["weasyprint", "docx2pdf"]
+# T2 nicht ehrlich beantworten.
+#
+# Reihenfolge nach Anspruch an die Umgebung. Die ersten drei sind reine
+# pip-Pakete und brauchen weder LibreOffice noch Word, LaTeX oder GTK - sie
+# muessen laufen, sonst haengt die PDF-Ausgabe an einer Fremdinstallation auf
+# dem Rechner der Lehrkraft. Die letzten beiden duerfen scheitern: weasyprint
+# braucht Systembibliotheken, docx2pdf ein installiertes Office.
+PDF_PAKETE = ["xhtml2pdf", "fpdf2", "reportlab", "weasyprint", "docx2pdf"]
 
 # Externe Programme, die fuer die Umwandlung in Frage kommen
 WERKZEUGE = ["soffice", "libreoffice", "pandoc", "wkhtmltopdf", "pdflatex", "git", "pip"]
@@ -87,24 +93,28 @@ WEB_ZIELE = [
     ("https://www.gesetze-im-internet.de/kschg/", "ndigungsschutzgesetz", "Gesetzesuebersicht"),
 ]
 
+# Bewusst mit Umlauten und Paragraphzeichen: Genau die gehen auf dem Weg
+# .md -> HTML -> PDF gern verloren, und ein Arbeitsblatt fuer Arbeit & Recht
+# besteht zur Haelfte daraus. Ein Beispiel in ASCII wuerde nichts beweisen.
 BEISPIEL_MD = """---
 schema: 1
 fach: arbeit-recht
 klasse: "11"
-thema: Kuendigungsschutz
+thema: Kündigungsschutz
 typ: arbeitsblatt
 ---
 
-# Arbeitsblatt: Kuendigungsfristen
+# Arbeitsblatt: Kündigungsfristen
 
 ## Material M1: Sachverhalt
 
-Frau Koenig ist seit vier Monaten bei der Firma X beschaeftigt. Sie
-erhaelt eine Kuendigung mit einer Frist von zwei Wochen.
+Frau König ist seit vier Monaten bei der Firma X beschäftigt. Sie
+erhält eine Kündigung mit einer Frist von zwei Wochen.
 
 ## Aufgabe 1
 
-Pruefen Sie anhand von M1, ob die Kuendigung fristgerecht ist.
+Prüfen Sie anhand von M1, ob die Kündigung fristgerecht ist
+(§ 622 Abs. 3 BGB).
 
 | Kriterium | Punkte |
 | --- | --- |
@@ -175,6 +185,32 @@ def pdf_gueltig(pfad):
     """Faengt die Datei mit %PDF an und hat sie ueberhaupt Inhalt?"""
     pfad = Path(pfad)
     return pfad.exists() and pfad.stat().st_size > 400 and pfad.read_bytes()[:5] == b"%PDF-"
+
+
+def pdf_text(pfad):
+    """Steht der Text im PDF als Text - oder ist er zu Pixeln geworden?
+    Fuer ein Arbeitsblatt entscheidend: sonst laesst es sich nicht durchsuchen,
+    nicht kopieren und nicht vorlesen."""
+    try:
+        import pypdf
+        inhalt = "\n".join(
+            (seite.extract_text() or "") for seite in pypdf.PdfReader(str(pfad)).pages)
+        return {"umlaute": "Kündigung" in inhalt, "paragraphzeichen": "§ 622" in inhalt}
+    except Exception as fehler:
+        return {"pruefung_nicht_moeglich": "{}: {}".format(type(fehler).__name__, fehler)}
+
+
+def pdf_ergebnis(ziel, protokoll=None):
+    """Einheitlicher Befund fuer jeden PDF-Weg."""
+    daten = {
+        "datei": datei_info(ziel),
+        "gueltig": pdf_gueltig(ziel),
+        "seiten": pdf_seiten(ziel),
+        "text": pdf_text(ziel) if pdf_gueltig(ziel) else None,
+    }
+    if protokoll is not None:
+        daten["protokoll"] = protokoll
+    return daten
 
 
 def datei_info(pfad):
@@ -311,7 +347,13 @@ def probe_bibliotheken(nachinstallieren):
 
     if nachinstallieren:
         ergebnis["installation"] = installieren(fehlend_wichtig)
-        ergebnis["installation_pdf"] = installieren(fehlend_pdf)
+        # Die Wege zum PDF einzeln, nicht als Gruppe: pip installiert entweder
+        # alles oder nichts. Ein Paket, das sich nicht aufloesen laesst, wuerde
+        # sonst die anderen mitreissen - und damit einen Weg verdecken, der
+        # funktioniert haette.
+        ergebnis["installation_pdf"] = {
+            paket: installieren([paket]) for paket in fehlend_pdf
+        }
         # Importcache leeren, sonst sieht Python die frische Installation nicht
         namen = {eintrag[0] for eintrag in BIBLIOTHEKEN}
         for modul in list(sys.modules):
@@ -471,7 +513,11 @@ def markdown_zu_html(quelle):
 
 
 def probe_pdf(ordner, docx_pfad):
-    ergebnis = {"word_zu_pdf": {}, "ersatzweg": {}}
+    # Drei Kategorien, absteigend nach dem, was die Lehrkraft davon hat:
+    #   word_zu_pdf - PDF sieht aus wie die Word-Vorlage der Schule
+    #   ersatzweg   - PDF aus HTML, eigenes Layout, aber ohne Fremdprogramme moeglich
+    #   direkt      - PDF im Skript gebaut, laeuft immer, Layout kostet Arbeit
+    ergebnis = {"word_zu_pdf": {}, "ersatzweg": {}, "direkt": {}}
     soffice = shutil.which("soffice") or shutil.which("libreoffice")
     if not soffice:
         for ort in LIBREOFFICE_ORTE:
@@ -488,7 +534,7 @@ def probe_pdf(ordner, docx_pfad):
             from docx2pdf import convert
             ziel = ziel_ordner / "docx2pdf.pdf"
             convert(str(docx_pfad), str(ziel))
-            return {"datei": datei_info(ziel), "gueltig": pdf_gueltig(ziel), "seiten": pdf_seiten(ziel)}
+            return pdf_ergebnis(ziel)
         ergebnis["word_zu_pdf"]["docx2pdf (MS Word)"] = versuch(ueber_docx2pdf)
 
         if soffice:
@@ -498,9 +544,7 @@ def probe_pdf(ordner, docx_pfad):
                      "--outdir", str(ziel_ordner), str(docx_pfad)],
                     timeout=300,
                 )
-                ziel = ziel_ordner / (Path(docx_pfad).stem + ".pdf")
-                return {"protokoll": protokoll, "datei": datei_info(ziel),
-                        "gueltig": pdf_gueltig(ziel), "seiten": pdf_seiten(ziel)}
+                return pdf_ergebnis(ziel_ordner / (Path(docx_pfad).stem + ".pdf"), protokoll)
             ergebnis["word_zu_pdf"]["LibreOffice"] = versuch(ueber_libreoffice)
         else:
             ergebnis["word_zu_pdf"]["LibreOffice"] = {
@@ -510,8 +554,7 @@ def probe_pdf(ordner, docx_pfad):
             def ueber_pandoc():
                 ziel = ziel_ordner / "pandoc.pdf"
                 protokoll = lauf(["pandoc", str(docx_pfad), "-o", str(ziel)], timeout=300)
-                return {"protokoll": protokoll, "datei": datei_info(ziel),
-                        "gueltig": pdf_gueltig(ziel), "seiten": pdf_seiten(ziel)}
+                return pdf_ergebnis(ziel, protokoll)
             ergebnis["word_zu_pdf"]["pandoc"] = versuch(ueber_pandoc)
         else:
             ergebnis["word_zu_pdf"]["pandoc"] = {
@@ -531,19 +574,29 @@ def probe_pdf(ordner, docx_pfad):
     ziel_ordner = ordner / "pdf_aus_html"
     ziel_ordner.mkdir(exist_ok=True)
 
+    # xhtml2pdf zuerst: reines pip-Paket, braucht kein einziges Systemprogramm.
+    def ueber_xhtml2pdf():
+        from xhtml2pdf import pisa
+        ziel = ziel_ordner / "xhtml2pdf.pdf"
+        with open(str(ziel), "wb") as datei:
+            status = pisa.CreatePDF(html, dest=datei, encoding="utf-8")
+        if status.err:
+            raise RuntimeError("xhtml2pdf meldet %s Fehler" % status.err)
+        return pdf_ergebnis(ziel)
+    ergebnis["ersatzweg"]["xhtml2pdf (ohne Fremdprogramm)"] = versuch(ueber_xhtml2pdf)
+
     def ueber_weasyprint():
         from weasyprint import HTML
         ziel = ziel_ordner / "weasyprint.pdf"
         HTML(string=html).write_pdf(str(ziel))
-        return {"datei": datei_info(ziel), "gueltig": pdf_gueltig(ziel), "seiten": pdf_seiten(ziel)}
+        return pdf_ergebnis(ziel)
     ergebnis["ersatzweg"]["weasyprint"] = versuch(ueber_weasyprint)
 
     if shutil.which("wkhtmltopdf"):
         def ueber_wkhtmltopdf():
             ziel = ziel_ordner / "wkhtmltopdf.pdf"
             protokoll = lauf(["wkhtmltopdf", str(html_datei), str(ziel)], timeout=300)
-            return {"protokoll": protokoll, "datei": datei_info(ziel),
-                    "gueltig": pdf_gueltig(ziel), "seiten": pdf_seiten(ziel)}
+            return pdf_ergebnis(ziel, protokoll)
         ergebnis["ersatzweg"]["wkhtmltopdf"] = versuch(ueber_wkhtmltopdf)
     else:
         ergebnis["ersatzweg"]["wkhtmltopdf"] = {
@@ -556,10 +609,44 @@ def probe_pdf(ordner, docx_pfad):
                  "--outdir", str(ziel_ordner), str(html_datei)],
                 timeout=300,
             )
-            ziel = ziel_ordner / (html_datei.stem + ".pdf")
-            return {"protokoll": protokoll, "datei": datei_info(ziel),
-                    "gueltig": pdf_gueltig(ziel), "seiten": pdf_seiten(ziel)}
+            return pdf_ergebnis(ziel_ordner / (html_datei.stem + ".pdf"), protokoll)
         ergebnis["ersatzweg"]["LibreOffice (HTML)"] = versuch(html_ueber_libreoffice)
+
+    # --- Weg 3: PDF direkt im Skript bauen -------------------------------
+    # Letzte Rueckfallebene. Laeuft ohne jedes Fremdprogramm, aber das Layout
+    # muss md_zu_pdf.py dann selbst setzen - kein HTML, keine Word-Vorlage.
+    ziel_ordner = ordner / "pdf_direkt"
+    ziel_ordner.mkdir(exist_ok=True)
+    TITEL_ZEILE = "Arbeitsblatt: Kündigungsfristen"
+    TEXT_ZEILE = ("Prüfen Sie anhand von M1, ob die Kündigung fristgerecht ist "
+                  "(§ 622 Abs. 3 BGB).")
+
+    def ueber_fpdf2():
+        from fpdf import FPDF
+        ziel = ziel_ordner / "fpdf2.pdf"
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("helvetica", "B", 18)
+        pdf.cell(0, 12, TITEL_ZEILE, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("helvetica", size=11)
+        pdf.multi_cell(0, 7, TEXT_ZEILE)
+        pdf.output(str(ziel))
+        return pdf_ergebnis(ziel)
+    ergebnis["direkt"]["fpdf2 (ohne Fremdprogramm)"] = versuch(ueber_fpdf2)
+
+    def ueber_reportlab():
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Table
+        ziel = ziel_ordner / "reportlab.pdf"
+        stile = getSampleStyleSheet()
+        SimpleDocTemplate(str(ziel), pagesize=A4).build([
+            Paragraph(TITEL_ZEILE, stile["Heading1"]),
+            Paragraph(TEXT_ZEILE, stile["BodyText"]),
+            Table([["Kriterium", "Punkte"], ["Frist in der Probezeit erkannt", "2"]]),
+        ])
+        return pdf_ergebnis(ziel)
+    ergebnis["direkt"]["reportlab (ohne Fremdprogramm)"] = versuch(ueber_reportlab)
 
     return ergebnis
 
@@ -621,14 +708,22 @@ def bewerten(daten):
 
     word_wege = geglueckt("word_zu_pdf")
     ersatz_wege = geglueckt("ersatzweg")
+    direkt_wege = geglueckt("direkt")
     if word_wege:
-        ampel["T2"] = ("ok", "Word → PDF funktioniert über: %s" % ", ".join(word_wege))
+        ampel["T2"] = ("ok", "Word → PDF funktioniert über: %s. Das PDF folgt der "
+                             "Word-Vorlage der Schule." % ", ".join(word_wege))
     elif ersatz_wege:
         ampel["T2"] = ("teilweise",
-                       "Word → PDF scheitert, aber Ersatzweg .md → HTML → PDF geht über: %s"
+                       "Word → PDF scheitert. Ersatzweg .md → HTML → PDF geht über: %s. "
+                       "Das PDF sieht dann anders aus als die Word-Datei."
                        % ", ".join(ersatz_wege))
+    elif direkt_wege:
+        ampel["T2"] = ("teilweise",
+                       "Nur der direkte Weg geht (%s). PDFs sind möglich, aber das "
+                       "Layout muss ein Skript selbst setzen." % ", ".join(direkt_wege))
     else:
-        ampel["T2"] = ("fehlt", "Kein Weg zu einem PDF gefunden – weder aus Word noch über HTML")
+        ampel["T2"] = ("fehlt", "Kein Weg zu einem PDF gefunden – auch keiner, "
+                                "der ohne Fremdprogramme auskommt")
 
     # T3 Word/PowerPoint mit Vorlage
     word = daten.get("word", {})
@@ -751,27 +846,40 @@ def bericht_schreiben(daten, ziel):
     z.append("")
 
     if bib.get("installation"):
-        for schluessel, ueberschrift, pakete in (
-            ("installation", "Nachinstallation (unverzichtbar)", bib.get("fehlend_unverzichtbar")),
-            ("installation_pdf", "Nachinstallation (Wege zum PDF)", bib.get("fehlend_pdf")),
-        ):
-            inst = bib.get(schluessel) or {}
-            z.append("**%s:** %s" % (
-                ueberschrift,
-                inst.get("hinweis") or ("geglückt" if inst.get("ok") else "fehlgeschlagen")))
-            if pakete:
-                z.append("")
-                z.append("Versucht wurde: %s" % ", ".join("`%s`" % p for p in pakete))
-            protokoll = inst.get("wert") if isinstance(inst.get("wert"), dict) else None
-            if protokoll and protokoll.get("ausgabe"):
-                z.append("")
-                z.append("```")
-                z.append(protokoll["ausgabe"][-800:])
-                z.append("```")
-            elif inst.get("fehler"):
-                z.append("")
-                z.append("Fehler: `%s`" % inst["fehler"])
+        inst = bib["installation"]
+        z.append("**Nachinstallation (unverzichtbar):** %s" % (
+            inst.get("hinweis") or ("geglückt" if inst.get("ok") else "fehlgeschlagen")))
+        if bib.get("fehlend_unverzichtbar"):
             z.append("")
+            z.append("Versucht wurde: %s"
+                     % ", ".join("`%s`" % p for p in bib["fehlend_unverzichtbar"]))
+        if inst.get("fehler"):
+            z.append("")
+            z.append("Fehler: `%s`" % inst["fehler"])
+        z.append("")
+
+        z.append("**Nachinstallation (Wege zum PDF), einzeln versucht:**")
+        z.append("")
+        einzeln = bib.get("installation_pdf") or {}
+        if not einzeln:
+            z.append("Nichts zu tun, alle waren schon vorhanden.")
+        else:
+            z.append("| Paket | Installation |")
+            z.append("| --- | --- |")
+            for paket, wert in einzeln.items():
+                z.append("| `%s` | %s |" % (
+                    paket,
+                    "✅ geglückt" if wert.get("ok") else "❌ %s" % wert.get("fehler")))
+            z.append("")
+            z.append("> Installiert heißt noch nicht lauffähig – ob ein Weg wirklich "
+                     "ein PDF erzeugt, steht bei T2.")
+            z.append(">")
+            z.append("> **Dieser Lauf unterschätzt T2.** Nach einer Nachinstallation "
+                     "einmal **erneut ohne `--install`** laufen lassen: Manche Pakete "
+                     "sind erst in einem frischen Prozess voll nutzbar. `docx2pdf` "
+                     "etwa zieht `pywin32` nach und meldet im selben Lauf noch einen "
+                     "Fehler, im nächsten erzeugt es das PDF.")
+        z.append("")
     else:
         z.append("_Nachinstallation nicht versucht. Für die zweite Hälfte von T1 "
                  "(„bzw. lassen sich installieren“) das Skript erneut mit `--install` aufrufen._")
@@ -809,32 +917,52 @@ def bericht_schreiben(daten, ziel):
     # --- T2 ---
     z.append("## T2 – PDF")
     z.append("")
+    z.append("Drei Wege, absteigend nach dem, was die Lehrkraft davon hat. Nur der "
+             "Hauptweg liefert ein PDF, das der Word-Vorlage der Schule folgt – "
+             "er braucht dafür aber ein Fremdprogramm auf dem Rechner.")
+    z.append("")
     for bereich, ueberschrift in (
-        ("word_zu_pdf", "Hauptweg: Word → PDF"),
+        ("word_zu_pdf", "Hauptweg: Word → PDF (braucht Word oder LibreOffice)"),
         ("ersatzweg", "Ersatzweg: .md → HTML → PDF"),
+        ("direkt", "Rückfallebene: PDF direkt im Skript bauen"),
     ):
         z.append("### %s" % ueberschrift)
         z.append("")
-        z.append("| Weg | Ergebnis | Seiten | Größe |")
-        z.append("| --- | --- | --- | --- |")
+        z.append("| Weg | Ergebnis | Seiten | Text im PDF | Größe |")
+        z.append("| --- | --- | --- | --- | --- |")
         for name, wert in daten.get("pdf", {}).get(bereich, {}).items():
             if not isinstance(wert, dict):
                 continue
             if name == "markdown_zu_html":
-                z.append("| Markdown → HTML | ✅ über %s | – | %s Bytes |" % (
+                z.append("| Markdown → HTML | ✅ über %s | – | – | %s Bytes |" % (
                     wert.get("weg"), wert.get("datei", {}).get("bytes", "?")))
                 continue
             if wert.get("ok") and isinstance(wert.get("wert"), dict):
                 inhalt = wert["wert"]
-                z.append("| %s | %s | %s | %s Bytes |" % (
+                text = inhalt.get("text") or {}
+                if "pruefung_nicht_moeglich" in text:
+                    textspalte = "? nicht prüfbar"
+                elif text.get("umlaute") and text.get("paragraphzeichen"):
+                    textspalte = "✅ Umlaute und §"
+                elif text:
+                    textspalte = "⚠️ unvollständig"
+                else:
+                    textspalte = "–"
+                z.append("| %s | %s | %s | %s | %s Bytes |" % (
                     name,
                     "✅ gültiges PDF" if inhalt.get("gueltig")
                     else "⚠️ Datei entstand, ist aber kein gültiges PDF",
                     inhalt.get("seiten") or "?",
+                    textspalte,
                     inhalt.get("datei", {}).get("bytes", "?")))
             else:
-                z.append("| %s | ❌ %s | – | – |" % (name, wert.get("fehler", "fehlgeschlagen")))
+                z.append("| %s | ❌ %s | – | – | – |" % (
+                    name, wert.get("fehler", "fehlgeschlagen")))
         z.append("")
+    z.append("„Text im PDF“ prüft, ob der Inhalt als **Text** im PDF steht und nicht "
+             "als Pixel – sonst lässt sich ein Arbeitsblatt weder durchsuchen noch "
+             "kopieren noch vorlesen.")
+    z.append("")
 
     # --- T6 ---
     z.append("## T6 – Webzugriff aus dem Skript")
@@ -965,6 +1093,13 @@ def main():
         print("%s %s  %s" % (SYMBOL[stufe], punkt, text))
     print("⬜ T4, T5, T7, T8, T9 – Beobachtungen, trägt der Skill nach")
     print("-" * 60)
+    nachinstalliert = daten["bibliotheken"].get("installation_pdf") or {}
+    if argumente.install and nachinstalliert:
+        print("Hinweis: Es wurde nachinstalliert (%d Pakete für PDF). Dieser Lauf"
+              % len(nachinstalliert))
+        print("unterschätzt T2 möglicherweise – bitte einmal ERNEUT ohne --install")
+        print("starten, damit frisch installierte Pakete voll zur Verfügung stehen.")
+        print("-" * 60)
     print("Bericht:  %s" % bericht)
     print("Rohdaten: %s" % roh)
     return 0

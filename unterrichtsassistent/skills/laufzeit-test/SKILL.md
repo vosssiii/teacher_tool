@@ -81,6 +81,13 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/laufzeit_test.py" --umgebung "Claude Cowor
 
 Das beantwortet die zweite Hälfte von T1 („bzw. lassen sich installieren“).
 
+**Danach ein drittes Mal ohne `--install` laufen lassen.** Das ist kein
+überflüssiger Lauf: Frisch installierte Pakete sind teils erst in einem
+neuen Prozess voll nutzbar. `docx2pdf` etwa meldet im Installationslauf
+noch einen Fehler und erzeugt im nächsten Lauf ein einwandfreies PDF – ein
+Lauf direkt nach `--install` bewertet T2 also zu streng. Es zählt der
+letzte Lauf.
+
 ## Schritt 3 – Bericht lesen
 
 Lies `laufzeit-test/bericht.md`. Die Ampel oben zeigt T1, T2, T3 und T6.

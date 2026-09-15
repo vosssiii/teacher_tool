@@ -62,11 +62,42 @@ Ergebnis in `laufzeit-test/`: `bericht.md` (lesbar) und `roh.json`
 - Eine erzeugte Datei beweist nichts. Word und PowerPoint werden
   **zurückgelesen** und geprüft: Wurden die Formatvorlagen angewendet, ist
   die Tabelle erhalten, sind Umlaute und `§` intakt?
-- `--install` läuft in zwei Durchgängen: unverzichtbare Bibliotheken und
-  getrennt davon die Wege zum PDF. Die scheitern aus eigenen Gründen –
-  `weasyprint` etwa installiert sich per pip und startet trotzdem nicht,
-  wenn die GTK-Systembibliotheken fehlen. „Installierbar“ und „läuft“ sind
-  nicht dasselbe, und genau dieser Unterschied entscheidet T2.
+- `--install` läuft in zwei Durchgängen: unverzichtbare Bibliotheken als
+  Gruppe, die Wege zum PDF einzeln – pip installiert sonst alles oder
+  nichts, und ein Paket, das sich nicht auflösen lässt, würde die anderen
+  mitreißen.
+- „Installierbar“ und „läuft“ sind zweierlei, und der Unterschied
+  entscheidet T2: `weasyprint` installiert sich per pip anstandslos und
+  startet trotzdem nicht, wenn die GTK-Systembibliotheken fehlen.
+- **Nach `--install` einmal erneut ohne den Schalter laufen lassen.**
+  Frisch installierte Pakete sind teils erst in einem neuen Prozess voll
+  nutzbar – `docx2pdf` meldet im Installationslauf einen Fehler und
+  erzeugt im nächsten ein einwandfreies PDF. Es zählt der letzte Lauf.
+
+## Der Weg zum PDF
+
+T2 prüft drei Kategorien, absteigend nach dem, was die Lehrkraft davon hat:
+
+| Kategorie | Wege | Braucht |
+| --- | --- | --- |
+| Word → PDF | docx2pdf, LibreOffice, pandoc | MS Word, LibreOffice oder LaTeX |
+| .md → HTML → PDF | **xhtml2pdf**, weasyprint, wkhtmltopdf | xhtml2pdf: nichts. Die anderen: GTK bzw. externes Programm |
+| PDF direkt bauen | **fpdf2**, **reportlab** | nichts |
+
+Die fett gesetzten sind reine pip-Pakete. Damit ist die PDF-Ausgabe **nicht**
+davon abhängig, dass auf dem Rechner der Lehrkraft LibreOffice installiert
+ist.
+
+Was davon abhängig bleibt: **nur der Hauptweg liefert ein PDF, das der
+Word-Vorlage der Schule folgt.** Kein reines Python-Paket rendert ein
+`.docx`-Layout. Fällt der Hauptweg aus, bekommt die Lehrkraft weiterhin
+beides – Word-Datei *und* PDF –, aber das PDF sieht anders aus als die
+Word-Datei. Kap. 5.2 sieht diesen Ersatzweg bereits vor; der Test sagt, ob
+er gebraucht wird.
+
+Zusätzlich wird geprüft, ob der Inhalt im PDF als **Text** ankommt und
+nicht als Pixel – ein Arbeitsblatt, das sich nicht durchsuchen, kopieren
+oder vorlesen lässt, wäre kein brauchbares Ergebnis.
 
 ## In Cowork testen
 
