@@ -70,11 +70,48 @@ Achte besonders auf diese Meldungen:
 | `SCAN` / `Scan-Seiten` | Kein Text vorhanden. Du musst ihn aus dem Bild lesen. |
 | `Bilddatei` | Ansehen, beschreiben, Text abschreiben. |
 | `Lösungsteil ab …` | Lösungen einschließen (siehe unten). |
+| `Text über Bild` | Bild nur anhand der Seitenansicht beschreiben. |
+| `UNVOLLSTÄNDIG?` | In der Abschrift fehlt Text aus der Seitenansicht. |
 | `FEHLER` | Datei nicht lesbar. In den Rückfragen nennen. |
 
 ## Schritt 3 – Jede Aufnahme bearbeiten
 
-Öffne je Arbeitsbereich `inhalt.md` und arbeite sie so durch:
+Öffne je Arbeitsbereich `inhalt.md` und arbeite sie so durch.
+
+### Zuerst: die Seitenansicht
+
+Liegt im Arbeitsbereich eine `ansicht.pdf`, **sieh sie dir an, bevor du
+irgendetwas entscheidest.** Sie zeigt das Dokument so, wie die Schüler es
+sehen. Die Abschrift und die Bilder unter `bilder/` sind nur herausgelöste
+Einzelteile – und die können vom Sichtbaren abweichen:
+
+- Ein herausgelöstes Bild kann einen **alten, überdeckten Stand** zeigen.
+  Im Test zeigte eine Grafik ein fehlerhaftes Buchstabenrätsel, das auf der
+  Seite längst überdeckt und korrigiert war.
+- Ein zugeschnittenes Bild zeigt **mehr**, als im Original zu sehen ist.
+
+Daraus folgen drei Regeln:
+
+1. **Widersprechen sich Abschrift, Bild und Ansicht, gilt die Ansicht.**
+2. **Einen Fehler im Original meldest du nur, wenn er in der Ansicht zu
+   sehen ist.** Hast du ihn nur in einem herausgelösten Teil gefunden,
+   stell eine Frage statt einen Befund.
+3. **`ACHTUNG`-Vermerke an Bildern sind ernst gemeint.** Das Skript hat
+   erkannt, dass über dem Bild Text liegt oder es zugeschnitten ist. Beschreib
+   das Bild so, wie es in der Ansicht aussieht, nicht so, wie die Datei unter
+   `bilder/` aussieht.
+
+Steht oben in der Abschrift **„In der Abschrift fehlen vermutlich Teile"**,
+hat das Skript Wörter gefunden, die in der Ansicht stehen, aber nicht in der
+Abschrift – etwa aus Fußnoten, SmartArt oder Kästen. Such sie in der Ansicht,
+ergänze sie an der richtigen Stelle und lösch dann den Hinweis. Stehen sie
+nur in Kopf- oder Fußzeilen (Seitenzahl, Schulname), gehören sie nicht in die
+Abschrift – dann lösch den Hinweis und nimm Schulname oder Klasse ggf. in den
+Metadatenkopf auf.
+
+**Kannst du die `ansicht.pdf` nicht als Seiten sehen**, sag das der
+Lehrkraft im Bericht ausdrücklich. Dann fehlt eine wichtige Kontrolle, und
+Bilder mit `ACHTUNG`-Vermerk bleiben auf `[unsicher: …]`.
 
 ### Metadatenkopf ausfüllen
 

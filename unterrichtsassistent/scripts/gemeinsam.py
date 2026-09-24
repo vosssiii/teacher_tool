@@ -51,6 +51,8 @@ SKRIPT_PLATZHALTER = [
      "Text im Bild noch nicht abgeschrieben (oder Abschnitt löschen, falls keiner da ist)"),
     (re.compile(r"\[Prüfen: Seite (\d+) ist vermutlich ein Scan"),
      "Scan-Seite %s noch nicht abgeschrieben"),
+    (re.compile(r"\[Prüfen: In der Abschrift fehlen vermutlich"),
+     "Abschrift unvollständig: Text aus der Seitenansicht fehlt – ergänzen, dann den Hinweis löschen"),
 ]
 
 

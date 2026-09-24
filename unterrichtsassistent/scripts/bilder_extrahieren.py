@@ -113,13 +113,16 @@ def aus_word(pfad, sammler):
 # --------------------------------------------------------------------------
 
 def aus_pdf_seite(seite, seitennummer, sammler):
-    namen = []
+    """Gibt eine Liste (PDF-Objektname, gespeicherter Dateiname) zurueck.
+    Der Objektname (z. B. /Im2) wird gebraucht, um festzustellen, ob auf der
+    Seite etwas ueber dem Bild liegt."""
+    paare = []
     try:
         bilder = list(seite.images)
     except Exception as fehler:
         sammler.weggelassen.append({"herkunft": "Seite %d" % seitennummer,
                                     "grund": "nicht lesbar: %s" % fehler})
-        return namen
+        return paare
     for bild in bilder:
         try:
             daten = bild.data
@@ -129,9 +132,10 @@ def aus_pdf_seite(seite, seitennummer, sammler):
                                         "grund": "nicht lesbar: %s" % fehler})
             continue
         name = sammler.ablegen(daten, endung, "Seite %d" % seitennummer)
-        if name and name not in namen:
-            namen.append(name)
-    return namen
+        objekt = "/" + Path(bild.name).stem
+        if name and (objekt, name) not in paare:
+            paare.append((objekt, name))
+    return paare
 
 
 def aus_pdf(pfad, sammler):

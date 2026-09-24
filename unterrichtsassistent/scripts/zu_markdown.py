@@ -38,6 +38,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from collections import Counter
 from pathlib import Path
 
@@ -156,18 +157,146 @@ def _stil_ebene(stil):
     return 0
 
 
-def _ist_liste(absatz):
-    try:
-        return absatz._p.pPr is not None and absatz._p.pPr.numPr is not None
-    except Exception:
-        return False
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
 
-def _laeufe_zu_text(absatz, dokument, sammler, in_ueberschrift):
+def _wert(element):
+    return element.get(W + "val") if element is not None else None
+
+
+def _roemisch(zahl):
+    ergebnis = ""
+    for wert, zeichen in ((1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"),
+                          (90, "xc"), (50, "l"), (40, "xl"), (10, "x"), (9, "ix"),
+                          (5, "v"), (4, "iv"), (1, "i")):
+        while zahl >= wert:
+            ergebnis += zeichen
+            zahl -= wert
+    return ergebnis
+
+
+def _zahl_formatieren(zahl, format_):
+    if format_ == "lowerLetter":
+        return chr(96 + ((zahl - 1) % 26) + 1)
+    if format_ == "upperLetter":
+        return chr(64 + ((zahl - 1) % 26) + 1)
+    if format_ == "lowerRoman":
+        return _roemisch(zahl)
+    if format_ == "upperRoman":
+        return _roemisch(zahl).upper()
+    if format_ == "decimalZero":
+        return "%02d" % zahl
+    return str(zahl)
+
+
+class Nummerierung:
+    """Rechnet Words automatische Nummerierung nach.
+
+    Word speichert bei nummerierten Absaetzen nicht "1.", sondern nur einen
+    Verweis auf eine Nummerierungsdefinition. Die Nummer selbst entsteht erst
+    beim Anzeigen. Ohne diese Klasse gingen "1., 2., 3." verloren - bei
+    Aufgaben fatal, weil sich Lösungen und Materialien darauf beziehen."""
+
+    def __init__(self, dokument):
+        self.stufen = {}      # abstractNumId -> {Ebene: (Format, Text, Start)}
+        self.num = {}         # numId -> abstractNumId
+        self.zaehler = {}     # numId -> {Ebene: Zaehlerstand}
+        try:
+            wurzel = dokument.part.numbering_part.element
+        except Exception:
+            return
+        for abstrakt in wurzel.findall(W + "abstractNum"):
+            stufen = {}
+            for ebene in abstrakt.findall(W + "lvl"):
+                try:
+                    nummer = int(ebene.get(W + "ilvl"))
+                    start = int(_wert(ebene.find(W + "start")) or 1)
+                except (TypeError, ValueError):
+                    continue
+                stufen[nummer] = (_wert(ebene.find(W + "numFmt")) or "decimal",
+                                  _wert(ebene.find(W + "lvlText")) or "",
+                                  start)
+            self.stufen[abstrakt.get(W + "abstractNumId")] = stufen
+        for num in wurzel.findall(W + "num"):
+            verweis = num.find(W + "abstractNumId")
+            if verweis is not None:
+                self.num[num.get(W + "numId")] = _wert(verweis)
+
+    @staticmethod
+    def _numpr(absatz):
+        """numId und Ebene - am Absatz selbst oder geerbt aus der Formatvorlage."""
+        kandidaten = [absatz._p.pPr]
+        stil = absatz.style
+        tiefe = 0
+        while stil is not None and tiefe < 6:
+            kandidaten.append(getattr(stil.element, "pPr", None))
+            stil = getattr(stil, "base_style", None)
+            tiefe += 1
+        num_id, ebene = None, None
+        for ppr in kandidaten:
+            if ppr is None:
+                continue
+            numpr = ppr.find(W + "numPr")
+            if numpr is None:
+                continue
+            if num_id is None:
+                num_id = _wert(numpr.find(W + "numId"))
+            if ebene is None and numpr.find(W + "ilvl") is not None:
+                ebene = int(_wert(numpr.find(W + "ilvl")) or 0)
+            if num_id is not None:
+                break
+        return num_id, (ebene or 0)
+
+    def praefix(self, absatz):
+        """(Zeichen, Ebene) fuer diesen Absatz oder None. Zeichen ist "-" fuer
+        Aufzaehlungspunkte, sonst die ausgerechnete Nummer, z. B. "2." oder "b)"."""
+        try:
+            num_id, ebene = self._numpr(absatz)
+        except Exception:
+            return None
+        if not num_id or num_id == "0":
+            return None
+        stufen = self.stufen.get(self.num.get(num_id), {})
+        format_, muster, start = stufen.get(ebene, ("decimal", "%%%d." % (ebene + 1), 1))
+        zaehler = self.zaehler.setdefault(num_id, {})
+        zaehler[ebene] = zaehler.get(ebene, start - 1) + 1
+        for tiefer in [k for k in zaehler if k > ebene]:
+            del zaehler[tiefer]
+        if format_ == "bullet":
+            return ("-", ebene)
+        if format_ == "none" or not muster:
+            return None
+
+        def einsetzen(treffer):
+            stufe = int(treffer.group(1)) - 1
+            f, _, s = stufen.get(stufe, ("decimal", "", 1))
+            return _zahl_formatieren(zaehler.get(stufe, s), f)
+
+        return (re.sub(r"%(\d)", einsetzen, muster).strip(), ebene)
+
+
+def _innerhalb(element, bis, tag):
+    """Liegt element (unterhalb von bis) in einem Element mit diesem Tag?"""
+    for vorfahr in element.iterancestors():
+        if vorfahr is bis:
+            return False
+        if vorfahr.tag == tag or vorfahr.tag.endswith("}" + tag.split("}")[-1]):
+            return True
+    return False
+
+
+def _laeufe_zu_text(absatz, dokument, sammler, in_ueberschrift, nummerierung):
     """Text eines Absatzes mit fett/kursiv/unterstrichen, Links und Bildern.
     Unterstrichenes bleibt als <u>…</u> erhalten - in Arbeitsblaettern ist
-    es oft Teil der Aufgabe ("Ersetzen Sie den unterstrichenen Ausdruck")."""
-    stuecke = []   # (text, fett, kursiv, unterstrichen) oder ("__BILD__", name)
+    es oft Teil der Aufgabe ("Ersetzen Sie den unterstrichenen Ausdruck").
+
+    Gibt zurueck: (Text, Bilder als [(Name, Hinweis)], Textfeld-Zeilen)."""
+    from docx.text.paragraph import Paragraph
+
+    stuecke = []   # (text, fett, kursiv, unterstrichen) oder ("__BILD__", name, hinweis)
+    kaesten = []
     try:
         inhalt = list(absatz.iter_inner_content())
     except AttributeError:
@@ -181,12 +310,33 @@ def _laeufe_zu_text(absatz, dokument, sammler, in_ueberschrift):
                 stuecke.append(("[%s](%s)" % (text, url), False, False, False))
             continue
         lauf = teil
-        for blip in lauf._r.iter("{http://schemas.openxmlformats.org/drawingml/2006/main}blip"):
-            rid = blip.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed")
-            if rid:
-                name = bx.aus_word_bild(dokument, rid, sammler)
-                if name:
-                    stuecke.append(("__BILD__", name))
+
+        # Textfelder. Word speichert sie oft doppelt: als moderne Form und als
+        # Rueckfall fuer alte Programme (mc:Fallback) - nur einmal nehmen.
+        for feld in lauf._r.iter(W + "txbxContent"):
+            if _innerhalb(feld, lauf._r, "Fallback") or _innerhalb(feld, lauf._r, W + "txbxContent"):
+                continue
+            for p in feld.findall(W + "p"):
+                kaesten.extend(_absatz_zu_md(Paragraph(p, dokument), dokument,
+                                             sammler, nummerierung))
+
+        for blip in lauf._r.iter(A + "blip"):
+            if _innerhalb(blip, lauf._r, W + "txbxContent"):
+                continue                            # gehoert zum Textfeld
+            rid = blip.get(R + "embed")
+            if not rid:
+                continue
+            name = bx.aus_word_bild(dokument, rid, sammler)
+            if not name:
+                continue
+            hinweis = ""
+            zuschnitt = blip.getparent().find(A + "srcRect")
+            if zuschnitt is not None and any(
+                    (zuschnitt.get(s) or "0") not in ("0", "") for s in ("l", "t", "r", "b")):
+                hinweis = ("ACHTUNG: In Word zugeschnitten – das Bild hier ist vollständig "
+                           "und zeigt mehr als im Original sichtbar. Seitenansicht prüfen.")
+            stuecke.append(("__BILD__", name, hinweis))
+
         text = lauf.text or ""
         if not text:
             continue
@@ -209,7 +359,7 @@ def _laeufe_zu_text(absatz, dokument, sammler, in_ueberschrift):
     ergebnis, bilder = [], []
     for stueck in zusammen:
         if stueck[0] == "__BILD__":
-            bilder.append(stueck[1])
+            bilder.append((stueck[1], stueck[2]))
             continue
         text, fett, kursiv, unter = stueck
         kern = text.strip()
@@ -225,28 +375,34 @@ def _laeufe_zu_text(absatz, dokument, sammler, in_ueberschrift):
         if fett:
             kern = "**%s**" % kern
         ergebnis.append(vorne + kern + hinten)
-    return "".join(ergebnis), bilder
+    return "".join(ergebnis), bilder, kaesten
 
 
-def _absatz_zu_md(absatz, dokument, sammler):
+def _absatz_zu_md(absatz, dokument, sammler, nummerierung=None):
     ebene = _stil_ebene(absatz.style)
-    text, bilder = _laeufe_zu_text(absatz, dokument, sammler, ebene > 0)
+    text, bilder, kaesten = _laeufe_zu_text(absatz, dokument, sammler, ebene > 0, nummerierung)
     text = text.replace("\t", "  ")
+    # Die Nummer wird auch fuer leere Absaetze gezaehlt, sonst verrutscht sie
+    praefix = nummerierung.praefix(absatz) if nummerierung else None
     zeilen = []
 
     if text.strip():
         teile = [t.rstrip() for t in text.split("\n")]
         teile = schreibzeilen_zusammenfassen(teile)
         if ebene > 0:
-            zeilen.append("#" * ebene + " " + " ".join(t.strip() for t in teile if t.strip()))
+            kopf = " ".join(t.strip() for t in teile if t.strip())
+            if praefix and praefix[0] not in ("-", ""):
+                kopf = praefix[0] + " " + kopf       # "1. Einleitung"
+            zeilen.append("#" * ebene + " " + kopf)
         elif ebene == -1:
             zeilen.append("*%s*" % " ".join(t.strip() for t in teile if t.strip()))
         else:
             erste = teile[0].lstrip()
             # Aufzaehlungszeichen, auch wenn es fett oder kursiv gesetzt war
             erste = re.sub(r"^(\*\*|\*)?[•▪◦●■](\*\*|\*)?\s*", "- ", erste)
-            if _ist_liste(absatz) and not re.match(r"^(-|\d+[.)])\s", erste):
-                erste = "- " + erste
+            if praefix and not re.match(r"^(-|\d+[.)]|[a-zA-Z][.)])\s", erste):
+                zeichen, tiefe = praefix
+                erste = "   " * tiefe + zeichen + " " + erste
             if erste.startswith("#"):
                 erste = "\\" + erste
             teile[0] = erste
@@ -256,8 +412,13 @@ def _absatz_zu_md(absatz, dokument, sammler):
             # Markdown-Doppelleerzeichen: das ist unsichtbar und geht beim
             # Bearbeiten verloren.
             zeilen.append("\n".join(t for t in teile))
-    for name in bilder:
-        zeilen.append(bildzeile(name))
+    for name, hinweis in bilder:
+        zeilen.append(bildzeile(name, hinweis))
+    if kaesten:
+        # Textfelder als Kasten, wie Einzelzellen-Tabellen
+        inhalt = "\n\n".join(kaesten)
+        zeilen.append("")                       # Leerzeile vor dem Kasten
+        zeilen.append("\n".join("> " + z if z.strip() else ">" for z in inhalt.split("\n")))
     return zeilen
 
 
@@ -285,6 +446,7 @@ def word_umwandeln(pfad, sammler):
     from docx.text.paragraph import Paragraph
 
     dokument = docx.Document(str(pfad))
+    nummerierung = Nummerierung(dokument)
     w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     bloecke, ueberschriften, stile = [], [], Counter()
     tabellen = 0
@@ -296,7 +458,7 @@ def word_umwandeln(pfad, sammler):
                 absatz = Paragraph(kind, dokument)
                 if absatz.text.strip():
                     stile[absatz.style.name] += 1
-                zeilen = _absatz_zu_md(absatz, dokument, sammler)
+                zeilen = _absatz_zu_md(absatz, dokument, sammler, nummerierung)
                 if zeilen and zeilen[0].startswith("#"):
                     ueberschriften.append(zeilen[0].lstrip("#").strip())
                 bloecke.append("\n".join(zeilen) if zeilen else "")
@@ -349,14 +511,21 @@ AUFZAEHLUNG = re.compile(r"^(\d+[.)]|[a-z][.)]|[-•▪◦●■–])\s")
 
 
 def _schriftmerkmale(seite):
-    """Holt je Textstueck Schriftgroesse und -schnitt. Gibt ein Woerterbuch
-    'Text -> Merkmale' zurueck, mit dem sich die Zeilen aus extract_text()
-    einordnen lassen."""
-    stuecke = []
+    """Holt je Textstueck Schriftgroesse, -schnitt und Position. Gibt zurueck:
+    ein Woerterbuch 'Text -> Merkmale' (zum Einordnen der Zeilen aus
+    extract_text()), die Liste der Stuecke und die Liste der Textpositionen
+    (fuer die Frage, ob Text ueber einem Bild liegt)."""
+    stuecke, punkte = [], []
 
     def besucher(text, cm, tm, schrift, groesse):
         if not text or not text.strip():
             return
+        try:
+            punkte.append((cm[0] * tm[4] + cm[2] * tm[5] + cm[4],
+                           cm[1] * tm[4] + cm[3] * tm[5] + cm[5],
+                           text.strip()))
+        except Exception:
+            pass
         try:
             skala = math.hypot(tm[0], tm[1]) * math.hypot(cm[0], cm[1])
         except Exception:
@@ -376,11 +545,84 @@ def _schriftmerkmale(seite):
     try:
         seite.extract_text(visitor_text=besucher)
     except Exception:
-        return {}, []
+        return {}, [], []
     merkmale = {}
     for text, groesse, fett, kursiv in stuecke:
         merkmale.setdefault(text, (groesse, fett, kursiv))
-    return merkmale, stuecke
+    return merkmale, stuecke, punkte
+
+
+def _matrix_mal(m, n):
+    """PDF-Matrizen [a b c d e f] multiplizieren: erst m, dann n."""
+    return (m[0] * n[0] + m[1] * n[2], m[0] * n[1] + m[1] * n[3],
+            m[2] * n[0] + m[3] * n[2], m[2] * n[1] + m[3] * n[3],
+            m[4] * n[0] + m[5] * n[2] + n[4], m[4] * n[1] + m[5] * n[3] + n[5])
+
+
+def _bildflaechen(seite):
+    """Wo auf der Seite liegt welches Bild? {Objektname: [Rechteck, ...]}.
+    Verfolgt dazu die Transformationen im Inhaltsstrom der Seite - ein Bild
+    wird als Einheitsquadrat gezeichnet, gestreckt durch die aktuelle Matrix."""
+    try:
+        from pypdf.generic import ContentStream
+        inhalt = seite.get_contents()
+        if inhalt is None:
+            return {}
+        befehle = ContentStream(inhalt, seite.pdf).operations
+        objekte = seite["/Resources"]["/XObject"]
+    except Exception:
+        return {}
+    matrix, stapel, flaechen = (1, 0, 0, 1, 0, 0), [], {}
+    for argumente, befehl in befehle:
+        if befehl == b"q":
+            stapel.append(matrix)
+        elif befehl == b"Q":
+            matrix = stapel.pop() if stapel else matrix
+        elif befehl == b"cm":
+            try:
+                matrix = _matrix_mal([float(a) for a in argumente], matrix)
+            except Exception:
+                pass
+        elif befehl == b"Do":
+            name = str(argumente[0])
+            try:
+                if objekte[name].get_object().get("/Subtype") != "/Image":
+                    continue
+            except Exception:
+                continue
+            ecken = [(matrix[0] * x + matrix[2] * y + matrix[4],
+                      matrix[1] * x + matrix[3] * y + matrix[5])
+                     for x, y in ((0, 0), (1, 0), (0, 1), (1, 1))]
+            flaechen.setdefault(name, []).append(
+                (min(p[0] for p in ecken), min(p[1] for p in ecken),
+                 max(p[0] for p in ecken), max(p[1] for p in ecken)))
+    return flaechen
+
+
+def _text_ueber_bild(flaechen, punkte):
+    """Text, dessen Position innerhalb eines Bildes liegt. Solcher Text ist
+    entweder daraufgelegt (dann fehlt er im herausgeloesten Bild) oder das
+    Bild verdeckt ihn - in beiden Faellen zeigt das Bild allein nicht, was
+    die Schueler sehen."""
+    befund = {}
+    for name, rechtecke in flaechen.items():
+        treffer = []
+        for x, y, text in punkte:
+            for x0, y0, x1, y1 in rechtecke:
+                if x0 + 1 < x < x1 - 1 and y0 + 1 < y < y1 - 1:
+                    treffer.append(text)
+                    break
+        if treffer:
+            text = " ".join(treffer)
+            # PDFs setzen Buchstaben manchmal einzeln: "GE O P S ER" -> "GEOPSER".
+            # Nur zusammenziehen, wenn die Grossbuchstaben-Stuecke im Schnitt
+            # so kurz sind - sonst wuerden echte Woerter verschmolzen.
+            gross = [t for t in text.split() if t.isalpha() and t.isupper()]
+            if gross and sum(len(t) for t in gross) / len(gross) <= 3:
+                text = re.sub(r"(?<=[A-ZÄÖÜ]) (?=[A-ZÄÖÜ])", "", text)
+            text = re.sub(r"(?<=_) (?=_)", "", text)
+            befund[name] = text
+    return befund
 
 
 def _merkmale_fuer(zeile, merkmale):
@@ -504,11 +746,12 @@ def pdf_umwandeln(pfad, sammler):
     seiten_md, zeichen, scanseiten, ueberschriften = [], 0, [], []
 
     # Grundschrift und Ueberschriftengroessen ueber das ganze Dokument
-    alle_merkmale, alle_stuecke = [], []
+    alle_merkmale, alle_stuecke, alle_punkte = [], [], []
     for seite in leser.pages:
-        merkmale, stuecke = _schriftmerkmale(seite)
+        merkmale, stuecke, punkte = _schriftmerkmale(seite)
         alle_merkmale.append(merkmale)
         alle_stuecke.extend(stuecke)
+        alle_punkte.append(punkte)
     gewicht = Counter()
     for text, groesse, _, _ in alle_stuecke:
         gewicht[groesse] += len(text)
@@ -517,12 +760,14 @@ def pdf_umwandeln(pfad, sammler):
         {s[1] for s in alle_stuecke if grundgroesse and s[1] >= grundgroesse * 1.2},
         reverse=True)
 
+    ueberdeckt = {}
     for nummer, seite in enumerate(leser.pages, start=1):
         try:
             text = seite.extract_text() or ""
         except Exception:
             text = ""
         bilder = bx.aus_pdf_seite(seite, nummer, sammler)
+        ueber = _text_ueber_bild(_bildflaechen(seite), alle_punkte[nummer - 1])
         zeichen += len(text.strip())
         teile = ["<!-- Seite %d -->" % nummer]
         if len(text.strip()) < 40:
@@ -535,8 +780,16 @@ def pdf_umwandeln(pfad, sammler):
             ueberschriften.extend(z.lstrip("#").strip()
                                   for z in md.split("\n") if z.startswith("#"))
             teile.append(md)
-        for name in bilder:
-            teile.append(bildzeile(name, "Position im Original: Seite %d" % nummer))
+        for objekt, name in bilder:
+            hinweis = "Position im Original: Seite %d" % nummer
+            if objekt in ueber:
+                # Fall 1 aus UMWANDLUNG.md: Das herausgeloeste Bild kann einen
+                # alten, verdeckten Stand zeigen. Nur die Seitenansicht zaehlt.
+                ueberdeckt[name] = ueber[objekt]
+                hinweis += (" · ACHTUNG: Auf der Seite liegt Text über diesem Bild "
+                            "(„%s“). Das Bild allein zeigt nicht, was die Schüler "
+                            "sehen – Seitenansicht prüfen." % ueber[objekt][:80])
+            teile.append(bildzeile(name, hinweis))
         seiten_md.append("\n\n".join(teile))
 
     return "\n\n".join(seiten_md), {
@@ -546,6 +799,7 @@ def pdf_umwandeln(pfad, sammler):
         "scan": bool(leser.pages) and len(scanseiten) == len(leser.pages),
         "ueberschriften": ueberschriften,
         "grundschrift_pt": grundgroesse,
+        "bilder_mit_text_darueber": ueberdeckt,
     }
 
 
@@ -560,17 +814,50 @@ def pptx_umwandeln(pfad, sammler):
     praesentation = Presentation(str(pfad))
     teile, ueberschriften = [], []
 
-    def formen_durchlaufen(formen, nummer, aus, titelform):
+    def rechteck(form):
+        return ((form.left or 0), (form.top or 0),
+                (form.left or 0) + (form.width or 0), (form.top or 0) + (form.height or 0))
+
+    def ueberlappen(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    def bildhinweis(form, folie):
+        """Folien sind Ebenen: Was spaeter in der Reihenfolge kommt, liegt
+        oben. Liegt Text ueber einem Bild oder ist es zugeschnitten, zeigt
+        das herausgeloeste Bild nicht, was auf der Folie zu sehen ist."""
+        hinweise = []
+        try:
+            if any((getattr(form, "crop_" + s, 0) or 0) > 0.001
+                   for s in ("left", "right", "top", "bottom")):
+                hinweise.append("in PowerPoint zugeschnitten – das Bild hier zeigt mehr "
+                                "als auf der Folie")
+            formen = list(folie.shapes)
+            if form in formen:
+                bild = rechteck(form)
+                darueber = [f for f in formen[formen.index(form) + 1:]
+                            if getattr(f, "has_text_frame", False) and f.has_text_frame
+                            and f.text_frame.text.strip() and ueberlappen(bild, rechteck(f))]
+                if darueber:
+                    hinweise.append("auf der Folie liegt Text darüber („%s“)"
+                                    % darueber[0].text_frame.text.strip()[:60])
+        except Exception:
+            pass
+        if not hinweise:
+            return ""
+        return "ACHTUNG: %s. Bild allein nicht verlässlich – Seitenansicht prüfen." \
+            % "; ".join(hinweise)
+
+    def formen_durchlaufen(formen, nummer, aus, titelform, folie):
         geordnet = sorted(formen, key=lambda f: ((f.top or 0), (f.left or 0)))
         for form in geordnet:
             if form is titelform:
                 continue
             if form.shape_type == MSO_SHAPE_TYPE.GROUP:
-                formen_durchlaufen(form.shapes, nummer, aus, titelform)
+                formen_durchlaufen(form.shapes, nummer, aus, titelform, folie)
             elif form.shape_type == MSO_SHAPE_TYPE.PICTURE:
                 name = bx.aus_pptx_form(form, nummer, sammler)
                 if name:
-                    aus.append(bildzeile(name))
+                    aus.append(bildzeile(name, bildhinweis(form, folie)))
             elif getattr(form, "has_table", False) and form.has_table:
                 aus.append(pipe_tabelle([[z.text for z in zeile.cells]
                                          for zeile in form.table.rows]))
@@ -586,7 +873,7 @@ def pptx_umwandeln(pfad, sammler):
         ueberschriften.append(titel)
         aus = ["## Folie %d%s" % (nummer, (": " + titel) if titel else "")]
         inhalt = []
-        formen_durchlaufen(folie.shapes, nummer, inhalt, titelform)
+        formen_durchlaufen(folie.shapes, nummer, inhalt, titelform, folie)
         aus.append("\n".join(inhalt))
         if folie.has_notes_slide:
             notizen = folie.notes_slide.notes_text_frame.text.strip()
@@ -638,11 +925,33 @@ def text_umwandeln(pfad, _sammler):
     return rumpf, {"kodierung": kodierung, "vorhandener_kopf": vorhandener_kopf}
 
 
+def _gerade_richten(pfad, ziel):
+    """Handyfotos sind oft quer gespeichert, mit einem Vermerk "beim Anzeigen
+    drehen" (EXIF). Viele Programme - und womoeglich Claude - ignorieren den
+    Vermerk und sehen das Bild seitlich. Deshalb hier drehen und ohne Vermerk
+    speichern. Gibt True zurueck, wenn gedreht wurde."""
+    try:
+        from PIL import Image, ImageOps
+        with Image.open(str(pfad)) as bild:
+            if bild.getexif().get(0x0112, 1) in (1, None):
+                return False
+            gedreht = ImageOps.exif_transpose(bild)
+            einstellungen = {"quality": 95} if bild.format == "JPEG" else {}
+            gedreht.save(str(ziel), format=bild.format, **einstellungen)
+            return True
+    except Exception:
+        return False
+
+
 def bild_umwandeln(pfad, sammler):
     daten = Path(pfad).read_bytes()
     # Eigenstaendige Bilder nie wegen Groesse aussortieren - sie SIND der Inhalt
     name = "%s-01%s" % (sammler.praefix, Path(pfad).suffix.lower())
-    (sammler.ziel / name).write_bytes(daten)
+    gedreht = _gerade_richten(pfad, sammler.ziel / name)
+    if gedreht:
+        daten = (sammler.ziel / name).read_bytes()
+    else:
+        (sammler.ziel / name).write_bytes(daten)
     masse = bx._masse(daten)
     sammler.gespeichert.append({"datei": name, "herkunft": "eigenständige Bilddatei",
                                 "bytes": len(daten),
@@ -656,7 +965,8 @@ def bild_umwandeln(pfad, sammler):
         "[Prüfen: Allen lesbaren Text vollständig abschreiben, in der Gliederung "
         "des Bildes. Ohne Text im Bild: diesen Abschnitt löschen.]",
     ])
-    return text, {"bild": True, "masse": sammler.gespeichert[-1]["masse"]}
+    return text, {"bild": True, "masse": sammler.gespeichert[-1]["masse"],
+                  "gerade_gerichtet": gedreht}
 
 
 def libreoffice_finden():
@@ -688,6 +998,104 @@ def umweg_libreoffice(pfad, zielformat):
     if not ergebnis.exists():
         raise RuntimeError("LibreOffice konnte %s nicht umwandeln" % Path(pfad).name)
     return ergebnis
+
+
+# --------------------------------------------------------------------------
+# Seitenansicht und Vollstaendigkeit
+# --------------------------------------------------------------------------
+
+def ansicht_erzeugen(lesbar, endung, bereich):
+    """Legt ansicht.pdf in den Arbeitsbereich: das Dokument so, wie die
+    Schueler es sehen. Claude prueft daran die Abschrift; das Skript
+    vergleicht damit die Vollstaendigkeit.
+
+    Word wird bewusst NICHT ueber das PDF umgewandelt - die Word-Datei kennt
+    Ueberschriften, Tabellen und Unterstreichungen, das PDF nur Buchstaben an
+    Positionen (UMWANDLUNG.md Kap. 3). Das PDF dient nur zum Vergleich."""
+    ziel = Path(bereich) / "ansicht.pdf"
+    if endung == ".pdf":
+        shutil.copy2(str(lesbar), str(ziel))
+        return {"datei": ziel.name, "weg": "Original"}
+    if endung not in (".docx", ".pptx"):
+        return {"datei": None, "grund": "für diese Dateiart nicht nötig"}
+
+    soffice = libreoffice_finden()
+    if soffice:
+        zwischen = Path(tempfile.mkdtemp(prefix="ua-ansicht-"))
+        subprocess.run([soffice, "--headless", "--norestore", "--convert-to", "pdf",
+                        "--outdir", str(zwischen), str(lesbar)],
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
+        erzeugt = zwischen / (Path(lesbar).stem + ".pdf")
+        if erzeugt.exists():
+            shutil.move(str(erzeugt), str(ziel))
+            return {"datei": ziel.name, "weg": "LibreOffice"}
+    if endung == ".docx":
+        # Rueckfall auf installiertes MS Word - nur ausserhalb der Sandbox
+        try:
+            from docx2pdf import convert
+            convert(str(lesbar), str(ziel))
+            if ziel.exists():
+                return {"datei": ziel.name, "weg": "MS Word"}
+        except Exception:
+            pass
+    return {"datei": None, "fehler": "Keine Seitenansicht möglich – LibreOffice fehlt"}
+
+
+WORT = re.compile(r"[^\W\d_]{2,}")
+NUMMER_AM_ANFANG = re.compile(r"^[\s*_>#\-]*(\d{1,2}|[a-z])[.)]\s")
+
+
+def _nummern_zaehlen(text):
+    """Zaehlt Nummerierungen ("1.", "b)") am Anfang von Zeilen und
+    Tabellenzellen. Formatierung davor (**, >, -) zaehlt nicht mit - sonst
+    gaelte eine fett gesetzte Aufgabe "**1. …**" als unnummeriert."""
+    return sum(1 for stueck in re.split(r"\n|\||<br>", text) if NUMMER_AM_ANFANG.match(stueck))
+
+
+def _woerter(text):
+    text = unicodedata.normalize("NFKC", text)      # Ligaturen: ﬁ -> fi
+    return Counter(w.lower() for w in WORT.findall(text))
+
+
+def vollstaendigkeit(ansicht, rumpf, ausnahmen=()):
+    """Vergleicht die Woerter der Seitenansicht mit denen der Abschrift.
+
+    Faengt Luecken, die der Word- oder PowerPoint-Leser hat, ohne dass jede
+    einzeln bekannt sein muss: Textfelder, automatische Nummern, Fussnoten,
+    SmartArt. Ist die Abschrift auffaellig unvollstaendig, bekommt sie oben
+    einen Pruefhinweis - der sperrt das Ablegen, bis Claude nachgesehen hat."""
+    import pypdf
+    leser = pypdf.PdfReader(str(ansicht))
+    text = "\n".join((s.extract_text() or "") for s in leser.pages)
+    text = unicodedata.normalize("NFKC", text)
+    # Silbentrennung am Zeilenende aufheben, sonst fehlen zerteilte Woerter
+    text = re.sub(r"([a-zäöüß])-\s*\n\s*([a-zäöüß])", r"\1\2", text)
+
+    fehlend = _woerter(text) - _woerter(rumpf) - _woerter(" ".join(ausnahmen))
+    anzahl = sum(fehlend.values())
+    nummern_ansicht = _nummern_zaehlen(text)
+    nummern_abschrift = _nummern_zaehlen(rumpf)
+    nummern_fehlen = max(0, nummern_ansicht - nummern_abschrift)
+
+    auffaellig = anzahl >= 3 or nummern_fehlen >= 2
+    teile = []
+    if anzahl:
+        teile.append("Diese Wörter stehen in der Seitenansicht, aber nicht hier: %s"
+                     % ", ".join(w for w, _ in fehlend.most_common(30)))
+    if nummern_fehlen >= 2:
+        teile.append("Nummerierungen am Zeilenanfang: in der Ansicht %d, hier %d"
+                     % (nummern_ansicht, nummern_abschrift))
+    hinweis = ("[Prüfen: In der Abschrift fehlen vermutlich Teile des Originals "
+               "(Seitenansicht: ansicht.pdf). %s. Fehlendes ergänzen, dann diesen "
+               "Hinweis löschen.]" % ". ".join(teile)) if auffaellig else None
+    return {
+        "fehlende_woerter": anzahl,
+        "beispiele": [w for w, _ in fehlend.most_common(30)],
+        "nummern_ansicht": nummern_ansicht,
+        "nummern_abschrift": nummern_abschrift,
+        "auffaellig": auffaellig,
+        "hinweis": hinweis,
+    }
 
 
 # --------------------------------------------------------------------------
@@ -741,6 +1149,22 @@ def umwandeln(quelle, arbeitsbereich):
     loesung = [u for u in bericht.get("ueberschriften", []) if LOESUNGSTEIL.search(u)]
     if loesung:
         bericht["loesungsteil_ab"] = loesung[0]
+
+    # Seitenansicht und Vollstaendigkeit (UMWANDLUNG.md Kap. 6, Fall 1).
+    # Fehler hier duerfen die Aufnahme nicht verhindern - sie fehlen dann nur.
+    try:
+        bericht["ansicht"] = ansicht_erzeugen(lesbar, endung, arbeitsbereich)
+    except Exception as fehler:
+        bericht["ansicht"] = {"datei": None, "fehler": str(fehler)}
+    if bericht["ansicht"].get("datei"):
+        try:
+            pruefung = vollstaendigkeit(arbeitsbereich / bericht["ansicht"]["datei"], rumpf,
+                                        bericht.get("kopf_und_fusszeilen", []))
+            bericht["vollstaendigkeit"] = pruefung
+            if pruefung["auffaellig"]:
+                rumpf = pruefung["hinweis"] + "\n\n" + rumpf
+        except Exception as fehler:
+            bericht["vollstaendigkeit"] = {"fehler": str(fehler)}
 
     felder = {
         "schema": g.SCHEMA, "fach": None, "klasse": None, "thema": None,
@@ -883,6 +1307,17 @@ def text_bericht(daten):
             merkmale.append("Bilddatei – ansehen und beschreiben")
         if e.get("loesungsteil_ab"):
             merkmale.append("Lösungsteil ab „%s“" % e["loesungsteil_ab"])
+        if e.get("bilder_mit_text_darueber"):
+            anzahl = len(e["bilder_mit_text_darueber"])
+            merkmale.append("Text über Bild: %d – Seitenansicht maßgeblich" % anzahl)
+        if (e.get("vollstaendigkeit") or {}).get("auffaellig"):
+            merkmale.append("UNVOLLSTÄNDIG? %d Wörter der Ansicht fehlen"
+                            % e["vollstaendigkeit"]["fehlende_woerter"])
+        if e.get("gerade_gerichtet"):
+            merkmale.append("Foto gerade gerichtet")
+        ansicht = e.get("ansicht") or {}
+        if ansicht.get("fehler"):
+            merkmale.append("keine Seitenansicht (%s)" % ansicht["fehler"])
         z.append("  ok  %s  (%s)" % (e["quelle"], ", ".join(merkmale) or e.get("art")))
         z.append("      → %s/inhalt.md" % e["arbeitsbereich"])
     z.append("")
