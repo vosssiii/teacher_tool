@@ -71,17 +71,6 @@ KLARTEXT = {
     "vorlage": "eine Word-Vorlage",
 }
 
-INDEX_KOPF = """# Inhaltsverzeichnis der Wissensbasis
-
-Diese Datei pflegt das Plugin. Bitte nicht von Hand bearbeiten – Änderungen
-gehen beim nächsten Durchlauf verloren. Was hier steht, stammt aus dem
-Metadaten-Kopf der einzelnen Materialien.
-
-| Datei | Fach | Klasse | Typ | Thema | Status | Herkunft | Beschreibung |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-"""
-
-
 def jetzt():
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -155,11 +144,15 @@ def bereitstellen(plugin_wurzel, wurzel):
 # --------------------------------------------------------------------------
 
 def index_anlegen(wurzel):
+    """Der Index wird immer aus den Metadatenkoepfen neu gebaut - dasselbe
+    Skript wie bei /aufnehmen, damit es nur ein Format gibt."""
     ziel = wurzel / "wissensbasis" / "_index.md"
-    if ziel.exists():
-        return {"pfad": str(ziel), "neu": False}
-    ziel.write_text(INDEX_KOPF, encoding="utf-8")
-    return {"pfad": str(ziel), "neu": True}
+    neu = not ziel.exists()
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import index_aktualisieren
+    ergebnis = index_aktualisieren.neu_bauen(wurzel)
+    ergebnis["neu"] = neu
+    return ergebnis
 
 
 def stand_anlegen(wurzel):
@@ -283,7 +276,7 @@ def bericht(daten):
                 beschriftung, len(teil.get("kopiert", [])),
                 ", ".join(teil.get("kopiert", [])) or "keine"))
 
-    z.append("Index: %s" % ("neu angelegt" if daten["index"]["neu"] else "vorhanden"))
+    z.append("Index: %s, %d Materialien" % ("neu angelegt" if daten["index"]["neu"] else "neu gebaut", daten["index"]["materialien"]))
     anzahl = daten["stand"].get("eintraege", 0)
     z.append("Prüfwerte: %s, %d %s" % (
         "neu angelegt" if daten["stand"]["neu"] else "fortgeschrieben",

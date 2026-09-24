@@ -13,7 +13,7 @@ alle Testpunkte T1–T9 beantwortet, Befunde in `BEFUNDE-PHASE-1A.md`
 | Befehl | Stand |
 | --- | --- |
 | `/unterrichtsassistent:einrichten` | gebaut |
-| `/unterrichtsassistent:aufnehmen` | offen |
+| `/unterrichtsassistent:aufnehmen` | gebaut |
 | `/unterrichtsassistent:material` | offen |
 | `/unterrichtsassistent:klassenarbeit` | offen (braucht Material der Lehrkraft) |
 | `/unterrichtsassistent:freigeben` | offen |
@@ -26,12 +26,19 @@ unterrichtsassistent/
 ├── .claude-plugin/plugin.json
 ├── commands/                       ohne diese Dateien gibt es keine Befehle
 │   ├── einrichten.md
+│   ├── aufnehmen.md
 │   └── laufzeit-test.md
 ├── skills/
 │   ├── einrichten/SKILL.md         Ordner vorbereiten, Kontext erfassen
+│   ├── aufnehmen/SKILL.md          Material einlesen, einordnen, ablegen
 │   └── laufzeit-test/SKILL.md      Ablauf des Laufzeit-Tests
 ├── scripts/
 │   ├── einrichten.py               Ordner, Skript-Bereitstellung, Bereitschaft
+│   ├── zu_markdown.py              Word/PDF/PowerPoint/Excel/Bild → .md
+│   ├── bilder_extrahieren.py       Bilder aus Word, PDF, PowerPoint
+│   ├── ablegen.py                  Pflichtprüfung, Ablage, Original archivieren
+│   ├── index_aktualisieren.py      _index.md aus den Metadatenköpfen
+│   ├── gemeinsam.py                Metadatenkopf, Dateinamen, Prüfwerte
 │   ├── vorlage_pruefen.py          Formatvorlagen einer Vorlage prüfen
 │   └── laufzeit_test.py            misst T1, T2, T3, T6
 └── vorlagen/
@@ -172,3 +179,21 @@ Sprachmodell“) **neu bewertet werden, bevor weitergebaut wird**, falls:
 - weder Word noch PowerPoint erzeugt werden können,
 - kein Weg zu einem PDF führt,
 - der Skill bei keiner freien Formulierung greift.
+
+## Ablauf von /aufnehmen
+
+```
+eingang/  ──zu_markdown.py──▶  _system/aufnahme/<name>/   ──Claude──▶   ──ablegen.py──▶  wissensbasis/<fach>/<typ>/
+                               inhalt.md, bilder/          liest, ordnet ein,               originale/
+                                                           beschreibt Bilder                _index.md
+```
+
+`ablegen.py` legt nur ab, was vollständig ist: Pflichtfelder gefüllt, jedes
+Bild angesehen, jeder Scan abgeschrieben. Sonst bleibt die Aufnahme liegen,
+mit Begründung. Bereits Aufgenommenes erkennt schon `zu_markdown.py` am
+Prüfwert und wandelt es gar nicht erst um.
+
+Die `.md` ist eine inhaltliche Abschrift, kein Layout-Nachbau – das Original
+bleibt in `originale/`. **Ein Zeilenumbruch innerhalb eines Absatzes bleibt
+ein Zeilenumbruch**; Unterstrichenes steht als `<u>…</u>` im Text, weil
+Aufgaben oft darauf verweisen.
